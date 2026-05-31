@@ -1,0 +1,125 @@
+<?php
+
+use Illuminate\Auth\Events\Lockout;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Livewire\Attributes\Layout;
+use Livewire\Attributes\Validate;
+use Livewire\Volt\Component;
+
+new #[Layout('components.layouts.auth')] class extends Component {
+    #[Validate('required|string|email')]
+    public string $email = '';
+
+    #[Validate('required|string')]
+    public string $password = '';
+
+    public bool $remember = false;
+
+    /**
+     * Handle an incoming authentication request.
+     */
+    public function login(): void
+    {
+        $this->validate();
+
+        $this->ensureIsNotRateLimited();
+
+        if (! Auth::attempt(['email' => $this->email, 'password' => $this->password], $this->remember)) {
+            RateLimiter::hit($this->throttleKey());
+
+            throw ValidationException::withMessages([
+                'email' => __('auth.failed'),
+            ]);
+        }
+
+        RateLimiter::clear($this->throttleKey());
+        Session::regenerate();
+
+        $this->redirectIntended(default: route('dashboard', absolute: false), navigate: true);
+    }
+
+    /**
+     * Ensure the authentication request is not rate limited.
+     */
+    protected function ensureIsNotRateLimited(): void
+    {
+        if (! RateLimiter::tooManyAttempts($this->throttleKey(), 5)) {
+            return;
+        }
+
+        event(new Lockout(request()));
+
+        $seconds = RateLimiter::availableIn($this->throttleKey());
+
+        throw ValidationException::withMessages([
+            'email' => __('auth.throttle', [
+                'seconds' => $seconds,
+                'minutes' => ceil($seconds / 60),
+            ]),
+        ]);
+    }
+
+    /**
+     * Get the authentication rate limiting throttle key.
+     */
+    protected function throttleKey(): string
+    {
+        return Str::transliterate(Str::lower($this->email).'|'.request()->ip());
+    }
+}; ?>
+
+<div class="flex flex-col gap-6">
+    <x-auth-header title="Connexion à votre compte" description="Entrez votre adresse e-mail et votre mot de passe ci-dessous pour vous connecter" />
+
+    <!-- Session Status -->
+    <x-auth-session-status class="text-center" :status="session('status')" />
+
+    <form wire:submit="login" class="flex flex-col gap-6">
+        <!-- Email Address -->
+        <flux:input wire:model="email" label="Adresse e-mail" type="email" name="email" required autofocus autocomplete="email" placeholder="email@exemple.com" />
+
+        <!-- Password -->
+        <div class="relative">
+            <flux:input
+                wire:model="password"
+                label="Mot de passe"
+                type="password"
+                name="password"
+                required
+                autocomplete="current-password"
+                placeholder="Mot de passe"
+            />
+
+            @if (Route::has('password.request'))
+                <x-text-link class="absolute right-0 top-0" href="{{ route('password.request') }}">
+                    Mot de passe oublié ?
+                </x-text-link>
+            @endif
+        </div>
+
+        <!-- Remember Me -->
+        <flux:checkbox wire:model="remember" label="Se souvenir de moi" />
+
+        <div class="flex items-center justify-end">
+            <flux:button variant="primary" type="submit" class="w-full">Se connecter</flux:button>
+        </div>
+    </form>
+
+    <div class="rounded-md bg-zinc-50 p-4 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-medium text-zinc-900 dark:text-zinc-100">Comptes de test disponibles :</h3>
+        <ul class="mt-2 text-xs text-zinc-600 dark:text-zinc-400 space-y-1">
+            <li><strong>Admin:</strong> admin@shipily.test (Mdp: password)</li>
+            <li><strong>Client:</strong> client@shipily.test (Mdp: password)</li>
+            <li><strong>Livreur:</strong> livreur@shipily.test (Mdp: password)</li>
+        </ul>
+    </div>
+
+    <div class="space-x-1 text-center text-sm text-zinc-600 dark:text-zinc-400">
+        Vous n'avez pas de compte ?
+        <x-text-link href="{{ route('register') }}">S'inscrire</x-text-link>
+    </div>
+</div>
